@@ -5,6 +5,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -43,7 +46,12 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
     //是否移动文件
     private boolean moveFile;
     //移动文件目录
-    private File targetDirector;
+    private File targetDirectory;
+    //是否复制文件
+    private boolean useCopy;
+    //目标目录
+    private File[] copyDirectory;
+
     private OutputStream outputStream;
     private ScheduledExecutorService rollService;
 
@@ -70,6 +78,8 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
         fileSuffix = context.getString("sink.fileSuffix", "");
         moveFile = context.getBoolean("sink.moveFile", false);
         String targetDirectory = context.getString("sink.targetDirectory", directory);
+        useCopy = context.getBoolean("sink.useCopy", false);
+        String copyDirectory = context.getString("sink.copyDirectory", "");
 
         serializerType = context.getString("sink.serializer", "TEXT");
         serializerContext =
@@ -88,7 +98,7 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
         batchSize = context.getInteger("sink.batchSize", defaultBatchSize);
 
         this.directory = new File(directory);
-        this.targetDirector = new File(targetDirectory);
+        this.targetDirectory = new File(targetDirectory);
 
         //检查目录权限
         if(!this.directory.exists()){
@@ -100,12 +110,29 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
         }
 
         //检查目标目录权限
-        if(!this.targetDirector.exists()){
-            if(!this.targetDirector.mkdirs()){
+        if(!this.targetDirectory.exists()){
+            if(!this.targetDirectory.mkdirs()){
                 throw new IllegalArgumentException("sink.directory is not a directory");
             }
-        }else if(!this.targetDirector.canWrite()){
+        }else if(!this.targetDirectory.canWrite()){
             throw new IllegalArgumentException("sink.directory can not write");
+        }
+
+        //配置文件复制
+        if(copyDirectory.length()>0  && useCopy){
+            String[] copyDirectories = copyDirectory.split(",");
+            this.copyDirectory = new File[copyDirectories.length];
+            for(int i=0; i<copyDirectories.length; i++){
+                this.copyDirectory[i] = new File(copyDirectories[i]);
+                //检查目标目录权限
+                if(!this.copyDirectory[i].exists()){
+                    if(!this.copyDirectory[i].mkdirs()){
+                        throw new IllegalArgumentException("sink.directory is not a directory");
+                    }
+                }else if(!this.copyDirectory[i].canWrite()){
+                    throw new IllegalArgumentException("sink.directory can not write");
+                }
+            }
         }
 
         if (sinkCounter == null) {
@@ -162,10 +189,16 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
                     outputStream.close();
                     sinkCounter.incrementConnectionClosedCount();
                     shouldRotate = false;
+                    if(useCopy){
+                        if(!copyLogFile(pathController.getCurrentFile())){
+                            logger.error("Copy completed file failed");
+                            throw new IOException("Copy completed file failed");
+                        }
+                    }
                     //文件名加后缀、移动文件
                     if(!rename(pathController.getCurrentFile())){
                         logger.error("Rename completed file failed");
-                        throw new IOException("Ranme completed file failed");
+                        throw new IOException("Rname completed file failed");
                     }
                 } catch (IOException e) {
                     sinkCounter.incrementConnectionFailedCount();
@@ -255,6 +288,12 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
                 serializer.beforeClose();
                 outputStream.close();
                 sinkCounter.incrementConnectionClosedCount();
+                if(useCopy){
+                    if(!copyLogFile(pathController.getCurrentFile())){
+                        logger.error("Copy completed file failed");
+                        throw new IOException("Copy completed file failed");
+                    }
+                }
                 //文件名加后缀、移动文件
                 if(!rename(pathController.getCurrentFile())){
                     logger.error("Rename completed file failed");
@@ -308,15 +347,101 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
             return current.delete();
         }
         if(useFileSuffix && moveFile){
-            return current.renameTo(new File(this.targetDirector, current.getName() + fileSuffix));
+            return current.renameTo(new File(this.targetDirectory, current.getName() + fileSuffix));
         }else if(useFileSuffix){
             return current.renameTo(new File(this.directory, current.getName() + fileSuffix));
         }else if(moveFile){
-            return current.renameTo(new File(this.targetDirector, current.getName()));
+            return current.renameTo(new File(this.targetDirectory, current.getName()));
         }else{
             return true;
         }
     }
+
+    private boolean copyLogFile(File current) throws IOException {
+        if (current.length() == 0L) {
+            logger.info("Delete empty file{}", current.getName());
+            return current.delete();
+        }
+        for(File targetDir : this.copyDirectory){
+            File targetFile = new File(targetDir.getAbsolutePath(), current.getName() + fileSuffix);
+            boolean copyResult = this.copyFile(current, targetFile, false);
+            if(!copyResult) return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * 复制单个文件
+     *
+     * @param srcFile
+     *            待复制的文件名
+     * @param destFile
+     *            目标文件名
+     * @param overlay
+     *            如果目标文件存在，是否覆盖
+     * @return 如果复制成功返回true，否则返回false
+     */
+    public boolean copyFile(File srcFile, File destFile,
+                                   boolean overlay) throws IOException {
+
+
+        // 判断源文件是否存在
+        if (!srcFile.exists()) {
+            throw new IOException("Copy file failed, source file does not exists");
+        } else if (!srcFile.isFile()) {
+            String MESSAGE = "复制文件失败，源文件：" + srcFile.getName() + "不是一个文件！";
+            throw new IOException("Copy file failed, source file is not a file");
+        }
+
+        // 判断目标文件是否存在
+        if (destFile.exists()) {
+            // 如果目标文件存在并允许覆盖
+            if (overlay) {
+                // 删除已经存在的目标文件，无论目标文件是目录还是单个文件
+                destFile.delete();
+            }
+        } else {
+            // 如果目标文件所在目录不存在，则创建目录
+            if (!destFile.getParentFile().exists()) {
+                // 目标文件所在目录不存在
+                if (!destFile.getParentFile().mkdirs()) {
+                    // 复制文件失败：创建目标文件所在目录失败
+                    return false;
+                }
+            }
+        }
+
+        // 复制文件
+        int byteread = 0; // 读取的字节数
+        InputStream in = null;
+        OutputStream out = null;
+
+        try {
+            in = new FileInputStream(srcFile);
+            out = new FileOutputStream(destFile);
+            byte[] buffer = new byte[1024];
+
+            while ((byteread = in.read(buffer)) != -1) {
+                out.write(buffer, 0, byteread);
+            }
+            return true;
+        } catch (FileNotFoundException e) {
+            return false;
+        } catch (IOException e) {
+            return false;
+        } finally {
+            try {
+                if (out != null)
+                    out.close();
+                if (in != null)
+                    in.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
 }
 
 
