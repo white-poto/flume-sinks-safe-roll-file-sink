@@ -1,32 +1,20 @@
 package cn.huyanping.flume.sinks;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.InputStream;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.flume.Channel;
-import org.apache.flume.Context;
-import org.apache.flume.Event;
-import org.apache.flume.EventDeliveryException;
-import org.apache.flume.Transaction;
+import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import org.apache.flume.*;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.instrumentation.SinkCounter;
+import org.apache.flume.serialization.EventSerializer;
+import org.apache.flume.serialization.EventSerializerFactory;
 import org.apache.flume.sink.AbstractSink;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Preconditions;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import org.apache.flume.serialization.EventSerializer;
-import org.apache.flume.serialization.EventSerializerFactory;
+import java.io.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class SafeRollingFileSink extends AbstractSink implements Configurable {
 
@@ -39,17 +27,17 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
 
     private File directory;
     private long rollInterval;
-    //ÒÑÍê³ÉÐ´ÈëµÄÎÄ¼þ£¬ÊÇ·ñÊ¹ÓÃºó×º
+    //å·²å®Œæˆå†™å…¥çš„æ–‡ä»¶ï¼Œæ˜¯å¦ä½¿ç”¨åŽç¼€
     private boolean useFileSuffix;
-    //ºó×ºÃû
+    //åŽç¼€å
     private String fileSuffix;
-    //ÊÇ·ñÒÆ¶¯ÎÄ¼þ
+    //æ˜¯å¦ç§»åŠ¨æ–‡ä»¶
     private boolean moveFile;
-    //ÒÆ¶¯ÎÄ¼þÄ¿Â¼
+    //ç§»åŠ¨æ–‡ä»¶ç›®å½•
     private File targetDirectory;
-    //ÊÇ·ñ¸´ÖÆÎÄ¼þ
+    //æ˜¯å¦å¤åˆ¶æ–‡ä»¶
     private boolean useCopy;
-    //Ä¿±êÄ¿Â¼
+    //ç›®æ ‡ç›®å½•
     private File[] copyDirectory;
 
     private OutputStream outputStream;
@@ -65,7 +53,7 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
     private volatile boolean shouldRotate;
 
     public SafeRollingFileSink() {
-        //Ô­pathControllerÂÖ×ªÎÄ¼þÃû¿ÉÄÜ»á³öÏÖÖØ¸´Çé¿ö£¬ÐÞÕý
+        //åŽŸpathControllerè½®è½¬æ–‡ä»¶åå¯èƒ½ä¼šå‡ºçŽ°é‡å¤æƒ…å†µï¼Œä¿®æ­£
         pathController = new SafePathManager();
         shouldRotate = false;
     }
@@ -100,7 +88,7 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
         this.directory = new File(directory);
         this.targetDirectory = new File(targetDirectory);
 
-        //¼ì²éÄ¿Â¼È¨ÏÞ
+        //æ£€æŸ¥ç›®å½•æƒé™
         if(!this.directory.exists()){
             if(!this.directory.mkdirs()){
                 throw new IllegalArgumentException("sink.directory is not a directory");
@@ -109,7 +97,7 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
             throw new IllegalArgumentException("sink.directory can not write");
         }
 
-        //¼ì²éÄ¿±êÄ¿Â¼È¨ÏÞ
+        //æ£€æŸ¥ç›®æ ‡ç›®å½•æƒé™
         if(!this.targetDirectory.exists()){
             if(!this.targetDirectory.mkdirs()){
                 throw new IllegalArgumentException("sink.directory is not a directory");
@@ -118,13 +106,13 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
             throw new IllegalArgumentException("sink.directory can not write");
         }
 
-        //ÅäÖÃÎÄ¼þ¸´ÖÆ
+        //é…ç½®æ–‡ä»¶å¤åˆ¶
         if(copyDirectory.length()>0  && useCopy){
             String[] copyDirectories = copyDirectory.split(",");
             this.copyDirectory = new File[copyDirectories.length];
             for(int i=0; i<copyDirectories.length; i++){
                 this.copyDirectory[i] = new File(copyDirectories[i]);
-                //¼ì²éÄ¿±êÄ¿Â¼È¨ÏÞ
+                //æ£€æŸ¥ç›®æ ‡ç›®å½•æƒé™
                 if(!this.copyDirectory[i].exists()){
                     if(!this.copyDirectory[i].mkdirs()){
                         throw new IllegalArgumentException("sink.directory is not a directory");
@@ -195,7 +183,7 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
                             throw new IOException("Copy completed file failed");
                         }
                     }
-                    //ÎÄ¼þÃû¼Óºó×º¡¢ÒÆ¶¯ÎÄ¼þ
+                    //æ–‡ä»¶ååŠ åŽç¼€ã€ç§»åŠ¨æ–‡ä»¶
                     if(!rename(pathController.getCurrentFile())){
                         logger.error("Rename completed file failed");
                         throw new IOException("Rname completed file failed");
@@ -294,7 +282,7 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
                         throw new IOException("Copy completed file failed");
                     }
                 }
-                //ÎÄ¼þÃû¼Óºó×º¡¢ÒÆ¶¯ÎÄ¼þ
+                //æ–‡ä»¶ååŠ åŽç¼€ã€ç§»åŠ¨æ–‡ä»¶
                 if(!rename(pathController.getCurrentFile())){
                     logger.error("Rename completed file failed");
                     throw new IOException("Ranme completed file failed");
@@ -372,48 +360,48 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
     }
 
     /**
-     * ¸´ÖÆµ¥¸öÎÄ¼þ
+     * å¤åˆ¶å•ä¸ªæ–‡ä»¶
      *
      * @param srcFile
-     *            ´ý¸´ÖÆµÄÎÄ¼þÃû
+     *            å¾…å¤åˆ¶çš„æ–‡ä»¶å
      * @param destFile
-     *            Ä¿±êÎÄ¼þÃû
+     *            ç›®æ ‡æ–‡ä»¶å
      * @param overlay
-     *            Èç¹ûÄ¿±êÎÄ¼þ´æÔÚ£¬ÊÇ·ñ¸²¸Ç
-     * @return Èç¹û¸´ÖÆ³É¹¦·µ»Øtrue£¬·ñÔò·µ»Øfalse
+     *            å¦‚æžœç›®æ ‡æ–‡ä»¶å­˜åœ¨ï¼Œæ˜¯å¦è¦†ç›–
+     * @return å¦‚æžœå¤åˆ¶æˆåŠŸè¿”å›žtrueï¼Œå¦åˆ™è¿”å›žfalse
      */
     public boolean copyFile(File srcFile, File destFile,
-                                   boolean overlay) throws IOException {
+                            boolean overlay) throws IOException {
 
 
-        // ÅÐ¶ÏÔ´ÎÄ¼þÊÇ·ñ´æÔÚ
+        // åˆ¤æ–­æºæ–‡ä»¶æ˜¯å¦å­˜åœ¨
         if (!srcFile.exists()) {
             throw new IOException("Copy file failed, source file does not exists");
         } else if (!srcFile.isFile()) {
-            String MESSAGE = "¸´ÖÆÎÄ¼þÊ§°Ü£¬Ô´ÎÄ¼þ£º" + srcFile.getName() + "²»ÊÇÒ»¸öÎÄ¼þ£¡";
+            String MESSAGE = "å¤åˆ¶æ–‡ä»¶å¤±è´¥ï¼Œæºæ–‡ä»¶ï¼š" + srcFile.getName() + "ä¸æ˜¯ä¸€ä¸ªæ–‡ä»¶ï¼";
             throw new IOException("Copy file failed, source file is not a file");
         }
 
-        // ÅÐ¶ÏÄ¿±êÎÄ¼þÊÇ·ñ´æÔÚ
+        // åˆ¤æ–­ç›®æ ‡æ–‡ä»¶æ˜¯å¦å­˜åœ¨
         if (destFile.exists()) {
-            // Èç¹ûÄ¿±êÎÄ¼þ´æÔÚ²¢ÔÊÐí¸²¸Ç
+            // å¦‚æžœç›®æ ‡æ–‡ä»¶å­˜åœ¨å¹¶å…è®¸è¦†ç›–
             if (overlay) {
-                // É¾³ýÒÑ¾­´æÔÚµÄÄ¿±êÎÄ¼þ£¬ÎÞÂÛÄ¿±êÎÄ¼þÊÇÄ¿Â¼»¹ÊÇµ¥¸öÎÄ¼þ
+                // åˆ é™¤å·²ç»å­˜åœ¨çš„ç›®æ ‡æ–‡ä»¶ï¼Œæ— è®ºç›®æ ‡æ–‡ä»¶æ˜¯ç›®å½•è¿˜æ˜¯å•ä¸ªæ–‡ä»¶
                 destFile.delete();
             }
         } else {
-            // Èç¹ûÄ¿±êÎÄ¼þËùÔÚÄ¿Â¼²»´æÔÚ£¬Ôò´´½¨Ä¿Â¼
+            // å¦‚æžœç›®æ ‡æ–‡ä»¶æ‰€åœ¨ç›®å½•ä¸å­˜åœ¨ï¼Œåˆ™åˆ›å»ºç›®å½•
             if (!destFile.getParentFile().exists()) {
-                // Ä¿±êÎÄ¼þËùÔÚÄ¿Â¼²»´æÔÚ
+                // ç›®æ ‡æ–‡ä»¶æ‰€åœ¨ç›®å½•ä¸å­˜åœ¨
                 if (!destFile.getParentFile().mkdirs()) {
-                    // ¸´ÖÆÎÄ¼þÊ§°Ü£º´´½¨Ä¿±êÎÄ¼þËùÔÚÄ¿Â¼Ê§°Ü
+                    // å¤åˆ¶æ–‡ä»¶å¤±è´¥ï¼šåˆ›å»ºç›®æ ‡æ–‡ä»¶æ‰€åœ¨ç›®å½•å¤±è´¥
                     return false;
                 }
             }
         }
 
-        // ¸´ÖÆÎÄ¼þ
-        int byteread = 0; // ¶ÁÈ¡µÄ×Ö½ÚÊý
+        // å¤åˆ¶æ–‡ä»¶
+        int byteread = 0; // è¯»å–çš„å­—èŠ‚æ•°
         InputStream in = null;
         OutputStream out = null;
 
@@ -443,6 +431,5 @@ public class SafeRollingFileSink extends AbstractSink implements Configurable {
     }
 
 }
-
 
 
