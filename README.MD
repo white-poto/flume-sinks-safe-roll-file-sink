@@ -8,6 +8,11 @@ flume roll file sink升级版，支持以下特性：
 + 支持空文件删除（当进行文件移动或文件重命名时，如文件为空，则执行delete()操作）
 + 支持文件多路复制
 
+jar文件下载
+-------
+[safe-roll-file-sink-0.2.jar](https://github.com/huyanping/flume-sinks-safe-roll-file-sink/releases)
+
+
 配置参数：
 ----------------------
 - sink.moveFile	default:false	含义：是否移动文件
