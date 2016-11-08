@@ -18,11 +18,11 @@ Download Jar
 Configuration：
 --------------
 - sink.moveFile	default:false	if move the file
-- sink.targetDirectory	default:''	the path which the files will be move to
+- sink.targetDirectory	default:''	the path which the files will be moved to
 - sink.useFileSuffix	default:false	if add suffix when moving or copying the file
 - sink.fileSuffix	default:.COMPLEATED	file suffix
 - sink.useCopy		default:false		if copy the file
-- sink.copyDirectory	default:''		the paths which the files will be copy to
+- sink.copyDirectory	default:''		the paths which the files will be copied to
 
 Configuration Example：
 ----------------------
